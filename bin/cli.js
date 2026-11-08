@@ -96,6 +96,18 @@ if (command === 'status') {
       const label = `${r.provider}/${r.model} [${r.key}]`;
       console.log(r.ok ? `  ✓ ${label}  ${r.ms}ms` : `  ✗ ${label}  ${r.status ?? ''} ${r.error}`);
     }
+    const badModels = new Map();
+    for (const r of results) {
+      if (!r.ok && (r.status === 404 || r.status === 400) && /model/i.test(r.error ?? '')) {
+        badModels.set(`${r.provider}/${r.model}`, `${r.provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_MODELS`);
+      }
+    }
+    for (const [m, envName] of badModels) {
+      console.log(`\n  → "${m}" isn't available. Change ${envName} in your .env (see the provider's model list).`);
+    }
+    if (results.some((r) => !r.ok && r.status === 401)) {
+      console.log('\n  → A key was rejected (401). Check it was copied fully, or create a new one.');
+    }
     console.log('');
     gateway.printStatus();
     process.exitCode = results.every((r) => r.ok) ? 0 : 1;

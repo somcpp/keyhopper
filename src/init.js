@@ -5,7 +5,7 @@ import { parseEnv } from './env.js';
 import { PRESETS, ENV_ALIASES } from './providers.js';
 
 const TEMPLATE = fileURLToPath(new URL('../.env.keyhopper.example', import.meta.url));
-const MARKER = '# ==================== keyhopper ====================';
+const MARKER = /^# =+ keyhopper =+/m; // matches every template version
 
 /**
  * Add keyhopper's commented config block to a project's .env (creating it if needed),
@@ -18,23 +18,18 @@ export function init({ cwd = process.cwd(), envFile = '.env' } = {}) {
   const template = fs.readFileSync(TEMPLATE, 'utf8');
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : null;
 
-  if (existing?.includes(MARKER)) {
+  if (existing && MARKER.test(existing)) {
     report.push(`• ${envFile} already has a keyhopper section — left it alone`);
   } else {
     const current = existing ? parseEnv(existing) : {};
-    // Don't add empty "GROQ_API_KEYS=" lines when the user already has that variable.
+    // Never redefine a variable the user already has (a later line would override theirs).
     const lines = template.split(/\r?\n/).map((line) => {
-      const m = /^([A-Z0-9_]+)=$/.exec(line);
-      return m && m[1] in current ? `# ${m[1]}=   (already set above)` : line;
+      const m = /^([A-Z0-9_]+)=/.exec(line);
+      return m && m[1] in current ? `# ${line}   (already set above)` : line;
     });
     const found = detectExistingKeys(current);
     if (found.length) {
-      lines.splice(
-        lines.indexOf('') + 1,
-        0,
-        `# Already detected in this file and used automatically: ${found.join(', ')}`,
-        '',
-      );
+      lines.splice(1, 0, `# Found keys already in this file, used automatically: ${found.join(', ')}`);
     }
     const block = lines.join('\n');
     const sep = existing == null ? '' : existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
