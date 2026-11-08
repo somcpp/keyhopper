@@ -1,6 +1,6 @@
 {
   "name": "keyhopper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Paste API keys from Groq, Gemini, NVIDIA, OpenRouter and more. When one hits a rate limit, keyhopper hops to the next key, model or provider automatically. Zero dependencies, OpenAI-compatible.",
   "type": "module",
   "main": "./src/index.js",

@@ -35,12 +35,26 @@ npx keyhopper init
 
 `init` adds a commented **keyhopper section to the end of your existing `.env`**, or creates one. It also writes a shareable `.env.keyhopper.example` and makes sure `.env` is in `.gitignore`. It never changes anything you already have, and if you already have a key like `GROQ_API_KEY` it detects it and uses it.
 
-Paste your keys (comma separated, as many as you like):
+This is the whole section it adds. Paste your keys and uncomment what you use:
 
 ```env
-GROQ_API_KEYS=gsk_aaa,gsk_bbb,gsk_ccc
+# ===================== keyhopper ===================== https://github.com/somcpp/keyhopper
+# Paste your API keys, comma separated. Uncomment more providers to add them.
+GROQ_API_KEYS=gsk_aaa,gsk_bbb
 GEMINI_API_KEYS=AIza_aaa,AIza_bbb
-NVIDIA_API_KEYS=nvapi-aaa
+# NVIDIA_API_KEYS=
+# OPENROUTER_API_KEYS=
+
+# Models to use, best first. Each model has its own rate limit, so more models = more free quota.
+GROQ_MODELS=openai/gpt-oss-120b
+GEMINI_MODELS=gemini-2.5-flash
+
+# Which provider to try first. The others are used when it's rate-limited.
+KEYHOPPER_PROVIDERS=groq,gemini
+
+# KEYHOPPER_STRATEGY=round-robin   # spread load over all keys evenly (default: best first)
+# KEYHOPPER_LOG=true               # print one line per request: who answered, quota left
+# ================== end keyhopper ==================
 ```
 
 Check that they all work:
@@ -49,7 +63,7 @@ Check that they all work:
 npx keyhopper check
 ```
 ```
-  ✓ groq/llama-3.3-70b-versatile [gsk_…qMWQ]  694ms
+  ✓ groq/openai/gpt-oss-120b [gsk_…qMWQ]  694ms
   ✓ gemini/gemini-2.5-flash [AIza…7dFs]  1164ms
   ✗ nvidia/meta/llama-3.3-70b-instruct [nvap…x9Qa]  401 Invalid API Key
 ```
@@ -82,7 +96,7 @@ await ai.text('Summarise this…', { system: 'You are concise.', temperature: 0.
 // full OpenAI-style request/response (tools, JSON mode, etc. pass straight through)
 const res = await ai.chat({ messages: [{ role: 'user', content: 'Hi' }] });
 res.choices[0].message.content;
-res._gateway;   // → { provider: 'groq', model: 'llama-3.3-70b-versatile', key: 'gsk_…qMWQ' }
+res._gateway;   // → { provider: 'groq', model: 'openai/gpt-oss-120b', key: 'gsk_…qMWQ' }
 
 // streaming
 for await (const piece of ai.streamText('Tell me a story')) process.stdout.write(piece);
@@ -90,7 +104,7 @@ for await (const chunk of ai.stream({ messages })) { /* raw OpenAI chunks */ }
 
 // pick a provider or model for one call
 await ai.chat({ model: 'gemini', messages });                       // any Gemini model
-await ai.chat({ model: 'groq/llama-3.1-8b-instant', messages });    // exact model
+await ai.chat({ model: 'groq/openai/gpt-oss-20b', messages });      // exact model
 await ai.text('hi', { providers: ['groq', 'nvidia'] });             // only these
 
 // cancel
@@ -102,8 +116,8 @@ await ai.text('long task', { signal: AbortSignal.timeout(5000) });
 ```js
 const ai = keyhopper({
   providers: [
-    { name: 'groq',   keys: ['gsk_1', 'gsk_2'], models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
-    { name: 'gemini', keys: ['AIza_1', 'AIza_2'], models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] },
+    { name: 'groq',   keys: ['gsk_1', 'gsk_2'], models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'] },
+    { name: 'gemini', keys: ['AIza_1', 'AIza_2'], models: ['gemini-2.5-flash', 'gemini-flash-lite-latest'] },
     { name: 'nvidia', keys: ['nvapi-1'] },
     // any OpenAI-compatible API (Ollama, LM Studio, vLLM, a company proxy…)
     { name: 'local', baseURL: 'http://localhost:11434/v1', keys: ['ollama'], models: ['llama3.2'] },
@@ -187,9 +201,9 @@ client.chat.completions.create(model="auto", messages=[{"role": "user", "content
 
 | name | env var | free keys at | default model |
 |---|---|---|---|
-| groq | `GROQ_API_KEYS` | console.groq.com | llama-3.3-70b-versatile |
+| groq | `GROQ_API_KEYS` | console.groq.com | openai/gpt-oss-120b ✓ |
+| gemini | `GEMINI_API_KEYS` (or `GOOGLE_API_KEY`) | aistudio.google.com | gemini-2.5-flash ✓ |
 | cerebras | `CEREBRAS_API_KEYS` | cloud.cerebras.ai | llama-3.3-70b |
-| gemini | `GEMINI_API_KEYS` (or `GOOGLE_API_KEY`) | aistudio.google.com | gemini-2.5-flash |
 | nvidia | `NVIDIA_API_KEYS` | build.nvidia.com | meta/llama-3.3-70b-instruct |
 | openrouter | `OPENROUTER_API_KEYS` | openrouter.ai | meta-llama/llama-3.3-70b-instruct:free |
 | mistral | `MISTRAL_API_KEYS` | console.mistral.ai | mistral-small-latest |
@@ -199,7 +213,9 @@ client.chat.completions.create(model="auto", messages=[{"role": "user", "content
 
 - `_API_KEY` (singular) works too. Keys can be separated by commas, spaces or newlines.
 - Providers rename models often, so set `GROQ_MODELS=…` to whatever is current. List several, best first.
-- Change the order with `KEYHOPPER_PROVIDERS=gemini,groq`.
+- ✓ = verified working (Nov 2026). Defaults for the other providers may be out of date, so set `<NAME>_MODELS`.
+- **If a model name is wrong or retired,** keyhopper prints a one-line warning telling you which `<NAME>_MODELS` to change, stops using that model, and keeps answering with your other models. `npx keyhopper check` shows it too.
+- Choose who goes first with `KEYHOPPER_PROVIDERS=gemini,groq`. Providers you don't list still follow, as backups.
 - **Custom provider:** add its name to `KEYHOPPER_PROVIDERS`, then set `MYLLM_BASE_URL`, `MYLLM_API_KEYS` and `MYLLM_MODELS`.
 
 ### All env vars
@@ -209,7 +225,7 @@ client.chat.completions.create(model="auto", messages=[{"role": "user", "content
 | `<PROVIDER>_API_KEYS` | – | keys, comma separated |
 | `<PROVIDER>_MODELS` | preset | models, best first |
 | `<PROVIDER>_BASE_URL` | preset | for custom providers |
-| `KEYHOPPER_PROVIDERS` | all presets | order to try providers in |
+| `KEYHOPPER_PROVIDERS` | groq, gemini, … | providers to try first (unlisted ones still follow) |
 | `KEYHOPPER_STRATEGY` | `priority` | or `round-robin` |
 | `KEYHOPPER_LOG` | off | `true` prints a line per request |
 | `KEYHOPPER_TOKEN` | – | server mode auth |
@@ -230,6 +246,8 @@ client.chat.completions.create(model="auto", messages=[{"role": "user", "content
 - Cooldowns live in memory per process. After a restart, keyhopper relearns them from the next 429.
 - A stream can only fail over before its first token. If a provider dies mid-stream, you get an error.
 - Different models answer differently. Pin one with `model: 'groq/…'` if you need consistent output.
+- **Reasoning models** (gpt-oss, qwen3, Gemini 2.5+) "think" before answering, and the thinking counts toward `max_tokens`. A low limit can give an **empty reply**. keyhopper warns when that happens, so leave `max_tokens` out or keep it generous (1000+).
+- A model that keeps erroring or hanging is rested longer each time (15s, 30s, 1m … up to 10m), so it stops slowing you down.
 - Respect each provider's terms of service. Some don't allow multiple free accounts per person.
 
 ---
@@ -248,7 +266,7 @@ npx keyhopper status          # table of a running server's keys + recent reques
 
 ```bash
 git clone https://github.com/somcpp/keyhopper && cd keyhopper
-npm test        # 16 tests against mock providers, no keys needed
+npm test        # 21 tests against mock providers, no keys needed
 ```
 
 ## License
