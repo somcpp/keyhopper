@@ -1,0 +1,59 @@
+{
+  "name": "keyhopper",
+  "version": "1.0.0",
+  "description": "Paste API keys from Groq, Gemini, NVIDIA, OpenRouter and more. When one hits a rate limit, keyhopper hops to the next key, model or provider automatically. Zero dependencies, OpenAI-compatible.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "keyhopper": "bin/cli.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "index.d.ts",
+    "README.md",
+    "LICENSE",
+    ".env.keyhopper.example"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node bin/cli.js serve"
+  },
+  "engines": {
+    "node": ">=20.16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/somcpp/keyhopper.git"
+  },
+  "homepage": "https://github.com/somcpp/keyhopper#readme",
+  "bugs": {
+    "url": "https://github.com/somcpp/keyhopper/issues"
+  },
+  "author": "Saubhagya Sharma",
+  "keywords": [
+    "llm",
+    "ai",
+    "gateway",
+    "groq",
+    "gemini",
+    "nvidia",
+    "openrouter",
+    "rate-limit",
+    "api-key-rotation",
+    "key-rotation",
+    "failover",
+    "fallback",
+    "openai-compatible",
+    "free-llm"
+  ],
+  "license": "MIT"
+}
