@@ -31,7 +31,7 @@ export interface ProviderConfig {
 }
 
 export interface GatewayEvent {
-  type: 'success' | 'rate_limited' | 'error' | 'rejected' | 'key_disabled' | 'waiting' | 'failed';
+  type: 'success' | 'rate_limited' | 'error' | 'rejected' | 'key_disabled' | 'waiting' | 'failed' | 'warning';
   /** Epoch ms when the event happened. */
   time: number;
   /** For 'success': how many keys failed before this one answered. */
@@ -70,6 +70,8 @@ export interface GatewayConfig {
   onEvent?: (event: GatewayEvent) => void;
   /** One log line per event (who answered, failovers, cooldowns, reset times). true = console, or pass your own logger. Default: KEYHOPPER_LOG env. */
   logs?: boolean | ((line: string) => void);
+  /** Print config problems (wrong model name, empty replies) once to the console. Default true. */
+  warnings?: boolean;
   /** @deprecated use logs */
   debug?: boolean;
   /** How many recent requests history() keeps. Default 100. */
@@ -135,7 +137,7 @@ export interface SlotStatus {
   model: string;
   key: string;
   state: 'ready' | 'cooling' | 'disabled';
-  disabledReason: 'auth' | 'no_credits' | null;
+  disabledReason: 'auth' | 'no_credits' | 'model_not_found' | null;
   cooldownMs: number;
   /** ISO time a cooling key becomes usable again. */
   resetsAt: string | null;

@@ -27,6 +27,8 @@ before(async () => {
       if (key.startsWith('401')) return fail(401, { error: { message: 'Invalid API Key' } });
       if (key.startsWith('500')) return fail(500, { error: { message: 'boom' } });
       if (key.startsWith('400')) return fail(400, { error: { message: 'unsupported param' } });
+      if (key.startsWith('404m')) return fail(404, { error: { message: `The model '${body.model}' does not exist or you do not have access to it.` } });
+      if (key.startsWith('empty')) return fail(200, { choices: [{ index: 0, message: { role: 'assistant', content: '' }, finish_reason: 'length' }] });
       const content = `hi from ${provider}:${key}:${body.model}`;
       if (body.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -250,8 +252,8 @@ test('init adds a keyhopper block to an existing .env without touching the rest'
   const env = fs.readFileSync(path.join(dir, '.env'), 'utf8');
   assert.ok(env.startsWith('DATABASE_URL=postgres://x\nGROQ_API_KEYS=gsk_existing\n'));
   assert.match(env, /# GROQ_API_KEYS=   \(already set above\)/);
-  assert.match(env, /^GEMINI_API_KEYS=$/m);
-  assert.match(env, /Already detected in this file and used automatically: GROQ_API_KEYS/);
+  assert.match(env, /^# GEMINI_API_KEYS=$/m);
+  assert.match(env, /Found keys already in this file, used automatically: GROQ_API_KEYS/);
   assert.ok(fs.existsSync(path.join(dir, '.env.keyhopper.example')));
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.env$/m);
 
@@ -259,4 +261,51 @@ test('init adds a keyhopper block to an existing .env without touching the rest'
   init({ cwd: dir });
   assert.equal(fs.readFileSync(path.join(dir, '.env'), 'utf8'), env);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('wrong model name: warns once with the fix, disables that model, still answers', async () => {
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (m) => warnings.push(m);
+  try {
+    const gw = createGateway({ providers: [provider('groq', ['404m-a-xxxxxxx'], ['old-model']), provider('b', ['ok-m-xxxxxxxx'])] });
+    assert.equal(await gw.text('hi'), 'hi from b:ok-m-xxxxxxxx:m1');
+    await gw.text('hi again');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Model "old-model" is not available on groq.*Change GROQ_MODELS in your \.env/);
+    const s = gw.status().find((x) => x.provider === 'groq');
+    assert.equal(s.state, 'disabled');
+    assert.equal(s.disabledReason, 'model_not_found');
+    assert.equal(s.failed, 1); // not retried on the second request
+  } finally {
+    console.warn = orig;
+  }
+});
+
+test('repeated server errors back off longer each time', async () => {
+  const gw = createGateway({ errorCooldownMs: 1000, maxWaitMs: 0, providers: [provider('a', ['500-x-xxxxxxxx']), provider('b', ['ok-x-xxxxxxxx'])] });
+  await gw.text('1');
+  const first = gw.status()[0].cooldownMs;
+  gw.slots[0].cooldownUntil = 0; // pretend the cooldown passed
+  await gw.text('2');
+  const second = gw.status()[0].cooldownMs;
+  assert.ok(first <= 1000 && second > 1500, `first ${first}, second ${second}`);
+});
+
+test('empty reply cut off by max_tokens prints a hint', async () => {
+  const warnings = [];
+  const gw = createGateway({ warnings: false, onEvent: (e) => e.type === 'warning' && warnings.push(e.message), providers: [provider('a', ['empty-xxxxxxxx'])] });
+  assert.equal(await gw.text('hi', { max_tokens: 5 }), '');
+  assert.match(warnings[0], /used up max_tokens before answering.*Raise max_tokens/);
+});
+
+test('KEYHOPPER_PROVIDERS sets who goes first without dropping other providers', () => {
+  const list = providersFromEnv({ KEYHOPPER_PROVIDERS: 'gemini', GROQ_API_KEYS: 'g', GEMINI_API_KEYS: 'm', NVIDIA_API_KEYS: 'n' });
+  assert.deepEqual(list.map((p) => p.name), ['gemini', 'groq', 'nvidia']);
+});
+
+test('built-in defaults are the verified models', async () => {
+  const { PRESETS } = await import('../src/index.js');
+  assert.deepEqual(PRESETS.groq.models, ['openai/gpt-oss-120b']);
+  assert.deepEqual(PRESETS.gemini.models, ['gemini-2.5-flash']);
 });

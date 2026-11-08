@@ -155,6 +155,8 @@ export class Gateway {
     this.logger = typeof logs === 'function' ? logs : logs ? (line) => console.log(line) : null;
     this.historySize = historySize;
     this._history = [];
+    this.warnings = config.warnings ?? true;
+    this._warned = new Set();
     this.fetch = fetchImpl ?? globalThis.fetch;
     if (!this.fetch) throw new Error('No fetch available — use Node 18+ or pass config.fetch');
 
@@ -221,7 +223,8 @@ export class Gateway {
     event.time = Date.now();
     if (this.logger) {
       try {
-        this.logger(formatEvent(event));
+        const line = formatEvent(event);
+        if (line) this.logger(line);
       } catch {}
     }
     try {
@@ -235,7 +238,15 @@ export class Gateway {
   }
 
   _isDead(slot) {
-    return this.deadKeys.has(`${slot.provider.name}:${slot.key}`);
+    return !!slot.disabled || this.deadKeys.has(`${slot.provider.name}:${slot.key}`);
+  }
+
+  /** Config problems the user must fix (wrong model name, etc.): printed once, even without logs. */
+  _warn(message, extra = {}) {
+    if (this._warned.has(message)) return;
+    this._warned.add(message);
+    if (this.warnings) console.warn(`\x1b[33m[keyhopper] ⚠ ${message}\x1b[0m`);
+    this._emit({ type: 'warning', message, ...extra });
   }
 
   /** Figure out which slots a request may use, from body.model and opts.providers. */
@@ -303,6 +314,7 @@ export class Gateway {
   _recordSuccess(slot, ms, failovers) {
     slot.ok++;
     slot.strikes = 0;
+    slot.errorStrikes = 0;
     slot.lastError = null;
     slot.lastUsed = Date.now();
     const info = { provider: slot.provider.name, model: slot.model, key: slot.keyId };
@@ -327,6 +339,12 @@ export class Gateway {
       kind = 'rate_limited';
     } else if (!status || status === 408 || status >= 500) {
       kind = 'server';
+    } else if (
+      (status === 404 || status === 400) &&
+      /model/i.test(text) &&
+      /does not exist|not found|no longer available|decommissioned|deprecated|not supported|unknown model|invalid model|not a valid model/i.test(text)
+    ) {
+      kind = 'model_not_found';
     } else {
       kind = 'bad_request';
     }
@@ -334,6 +352,16 @@ export class Gateway {
     if (kind === 'auth' || kind === 'no_credits') {
       this.deadKeys.set(`${slot.provider.name}:${slot.key}`, kind);
       this._emit({ type: 'key_disabled', reason: kind, ...base });
+    } else if (kind === 'model_not_found') {
+      // Wrong or retired model name: stop using it with this key and tell the user how to fix it.
+      slot.disabled = 'model_not_found';
+      ctx.skipGroups.add(slot.group);
+      const envName = `${slot.provider.name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_MODELS`;
+      this._warn(
+        `Model "${slot.model}" is not available on ${slot.provider.name} (renamed or retired?). ` +
+          `Change ${envName} in your .env, then run \`npx keyhopper check\`.`,
+        base,
+      );
     } else if (kind === 'rate_limited') {
       slot.rateLimited++;
       const backoff = Math.min(this.rateLimitCooldownMs * 2 ** slot.strikes, 3_600_000);
@@ -342,8 +370,11 @@ export class Gateway {
       slot.cooldownUntil = Date.now() + cooldownMs;
       this._emit({ type: 'rate_limited', cooldownMs, ...base });
     } else if (kind === 'server') {
-      slot.cooldownUntil = Date.now() + this.errorCooldownMs;
-      this._emit({ type: 'error', cooldownMs: this.errorCooldownMs, ...base });
+      // Back off harder each time, so a model that keeps hanging stops costing a full timeout per request.
+      const cooldownMs = Math.min(this.errorCooldownMs * 2 ** (slot.errorStrikes ?? 0), 600_000);
+      slot.errorStrikes = (slot.errorStrikes ?? 0) + 1;
+      slot.cooldownUntil = Date.now() + cooldownMs;
+      this._emit({ type: 'error', cooldownMs, ...base });
     } else {
       // The request itself didn't suit this provider/model (bad params, unknown model,
       // too large for its limits…). Don't punish the key; just try elsewhere.
@@ -464,6 +495,14 @@ export class Gateway {
       this._chatOnce(s, b, opts),
     );
     result._gateway = { provider: slot.provider.name, model, key: slot.keyId };
+    const choice = result.choices?.[0];
+    if (choice?.finish_reason === 'length' && !choice.message?.content && !choice.message?.tool_calls?.length) {
+      this._warn(
+        `Empty reply from ${slot.provider.name}/${model}: it used up max_tokens before answering ` +
+          `(reasoning models "think" first). Raise max_tokens or remove it.`,
+        result._gateway,
+      );
+    }
     return result;
   }
 
@@ -521,7 +560,7 @@ export class Gateway {
   status() {
     const now = Date.now();
     return this.slots.map((s) => {
-      const dead = this.deadKeys.get(`${s.provider.name}:${s.key}`);
+      const dead = s.disabled ?? this.deadKeys.get(`${s.provider.name}:${s.key}`);
       const cooling = !dead && s.cooldownUntil > now;
       const l = s.limits;
       // Provider-reported quota is a snapshot from the last response; once its window has
@@ -642,10 +681,11 @@ async function* parseSSE(body) {
  * Build provider config from env vars:
  *   GROQ_API_KEYS=key1,key2      (or GROQ_API_KEY)
  *   GROQ_MODELS=llama-3.3-70b-versatile,llama-3.1-8b-instant
- *   KEYHOPPER_PROVIDERS=groq,gemini,myllm   (optional order; custom ones need MYLLM_BASE_URL)
+ *   KEYHOPPER_PROVIDERS=gemini,groq,myllm   (optional: try these first; custom ones need MYLLM_BASE_URL)
  */
 export function providersFromEnv(env = globalThis.process?.env ?? {}) {
-  const order = env.KEYHOPPER_PROVIDERS ? toList(env.KEYHOPPER_PROVIDERS) : Object.keys(PRESETS);
+  // Providers named in KEYHOPPER_PROVIDERS go first; every other provider with keys still follows.
+  const order = [...new Set([...toList(env.KEYHOPPER_PROVIDERS), ...Object.keys(PRESETS)])];
   const out = [];
   for (const name of order) {
     const P = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
@@ -750,6 +790,8 @@ function formatEvent(e) {
       return `${head} ✗ ${who}  disabled (${e.reason === 'no_credits' ? 'out of credits' : 'invalid key'})`;
     case 'waiting':
       return `${head} … every key is busy, waiting ${formatMs(e.waitMs)} for one to reset`;
+    case 'warning':
+      return null; // already printed by _warn()
     case 'failed':
       return `${head} ✗ request failed: ${short(e.message, 160)}`;
     default:

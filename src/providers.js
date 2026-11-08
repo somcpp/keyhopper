@@ -1,19 +1,20 @@
 // Built-in presets. Every one of these exposes an OpenAI-compatible
 // /chat/completions endpoint, so a single client works for all of them.
-// Default models are just sensible starting points — override them in config
-// or with <PROVIDER>_MODELS env vars, since providers rename models often.
+// Default models: groq and gemini were verified working in Nov 2026. Providers rename
+// models often — override with <PROVIDER>_MODELS env vars or `models` in config.
+// Object order = default provider order.
 export const PRESETS = {
   groq: {
     baseURL: 'https://api.groq.com/openai/v1',
-    models: ['llama-3.3-70b-versatile'],
-  },
-  cerebras: {
-    baseURL: 'https://api.cerebras.ai/v1',
-    models: ['llama-3.3-70b'],
+    models: ['openai/gpt-oss-120b'],
   },
   gemini: {
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     models: ['gemini-2.5-flash'],
+  },
+  cerebras: {
+    baseURL: 'https://api.cerebras.ai/v1',
+    models: ['llama-3.3-70b'],
   },
   nvidia: {
     baseURL: 'https://integrate.api.nvidia.com/v1',
